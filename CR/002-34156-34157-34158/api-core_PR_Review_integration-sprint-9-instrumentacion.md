@@ -4,11 +4,15 @@
 > **US cubiertas:** [34156] COR-OTG-FAC · [34157] COR-OTG-PDP · [34158] COR-OTG-AVA
 > **Fecha de revisión:** 16/03/2026
 
+> **v2 — 16/03/2026:** Revisión completa desde el código en disco. La v1 contenía varias observaciones incorrectas (validators de ruta que no existen, `DateTime.Now` incorrecto, `Exitoso=false` incorrecto, fallback de Pendientes eliminado — todos estos puntos fueron errores del análisis inicial). Esta versión refleja el estado real del código.
+
 ---
 
 ## 1. Resumen ejecutivo
 
-El PR implementa el tramo final del flujo de instrumentación: solicitud de facturación → confirmación de pago → emisión de aval. Las tres features forman un pipeline coherente, usan el mismo patrón de repositorio/CQRS del proyecto y cuentan con cobertura de unit tests e integration tests. Se identifican **dos issues que requieren corrección** antes del merge y varias observaciones menores.
+El PR implementa el tramo final del flujo de instrumentación: solicitud de facturación → confirmación de pago → emisión de aval. Las tres features forman un pipeline coherente, siguen el patrón del proyecto, incluyen tests unitarios e integration tests de buena calidad, y corrigen las metadata hardcodeadas de `EstadoConfiguracionTransicionCommand`. También incorpora la feature de comparación carta banco (US 34022, branch `feature/34525`) como parte de la integración.
+
+Se identifican **tres issues que requieren corrección** antes del merge (dos heredados de la feature de carta banco) y varias observaciones menores.
 
 **Veredicto:** ⚠️ Aprueba con correcciones requeridas
 
@@ -20,59 +24,66 @@ El PR implementa el tramo final del flujo de instrumentación: solicitud de fact
 
 | Archivo | Tipo | Descripción |
 |---|---|---|
-| `Commands/SolicitarFacturacionCommand.cs` | Nuevo | Valida conjunto contractual completo, verifica no-duplicate, inserta evento de facturación |
-| `Dtos/Requests/SolicitarFacturacionRequestDto.cs` | Nuevo | DTO de request (IdSolicitud desde ruta) |
-| `Dtos/Responses/SolicitarFacturacionResponseDto.cs` | Nuevo | Respuesta con `Exitoso`, `IdSolicitudFacturacion`, `EstadoConjuntoContractual` |
-| `Dtos/Validators/SolicitarFacturacionRequestDtoValidator.cs` | Nuevo | Valida `IdSolicitud > 0` |
+| `Commands/SolicitarFacturacionCommand.cs` | Nuevo | Valida solicitud → conjunto contractual completo → no-duplicate → inserta evento |
+| `Dtos/Responses/SolicitarFacturacionResponseDto.cs` | Nuevo | Respuesta con `Exitoso`, `IdSolicitudFacturacion`, `EstadoConjuntoContractual?` |
 | `Core.Domain/Core/Contracts/ISolicitudesFacturacionRepository.cs` | Nuevo | `InsertAsync` + `ExistsBySolicitudAsync` |
-| `Core.Domain/Core/Entities/SolicitudFacturacion.cs` | Nuevo | Entidad de dominio con `IdSolicitud`, `FechaSolicitud`, `IdUsuarioSolicitud` |
-| `Core.Infraestructure/Repositories/Core/SolicitudesFacturacionRepository.cs` | Nuevo | SPs: `Core.SolicitudesFacturacion_Insert`, `Core.SolicitudesFacturacion_BySolicitud_Exists` |
-| `SolicitudesGarantiaController.cs` | Modificado | `POST {idSolicitud}/solicitar-facturacion` |
-| `EstadoConfiguracionTransicionCommand.cs` | Modificado | **Reemplaza mocks TODOs** de `contrato_firmado` y `orden_emision_factura_existe` por consultas reales a DB |
-| `UnitTesting/SolicitarFacturacionCommandHandlerTests.cs` | Nuevo | 8 tests (happy path, incompleto, duplicado, NotFound, IdCero, orden de llamadas, vacío, IdFacturacion) |
-| `IntegrationTesting/SolicitudesFacturacionTests.cs` | Nuevo | 2 tests (ExistsFalse, tipo booleano) |
+| `Core.Domain/Core/Entities/SolicitudFacturacion.cs` | Nuevo | Entidad con `IdSolicitud`, `FechaSolicitud`, `IdUsuarioSolicitud`, hereda de `EntityBase` |
+| `Core.Infraestructure/Repositories/Core/SolicitudesFacturacionRepository.cs` | Nuevo | SPs: `Core.SolicitudesFacturacion_Insert`, `Core.SolicitudesFacturacion_BySolicitud_Select` |
+| `SolicitudesGarantiaController.cs` | Modificado | `POST {idSolicitud}/solicitar-facturacion` — `[FromRoute]` |
+| `EstadoConfiguracionTransicionCommand.cs` | Modificado | Reemplaza mock `contrato_firmado` y `orden_emision_factura_existe` por consultas reales a DB |
+| `UnitTesting/SolicitarFacturacionCommandHandlerTests.cs` | Nuevo | 7 tests (happy path, incompleto, duplicado, NotFound, IdCero, orden de llamadas, conjunto vacío) |
+| `IntegrationTesting/SolicitudesFacturacionTests.cs` | Nuevo | 2 tests de integración |
 
-### US 34157 — Pendiente de Pago / Pago confirmado
+### US 34157 — Pago confirmado
 
 | Archivo | Tipo | Descripción |
 |---|---|---|
-| `Commands/SolicitudPagoConfirmarCommand.cs` | Nuevo | Valida estado `PendientePagoGarantia`, verifica no-duplicate, inserta evento de pago confirmado |
-| `Dtos/Requests/SolicitudPagoConfirmarRequestDto.cs` | Nuevo | DTO de request (IdSolicitud desde ruta) |
+| `Commands/SolicitudPagoConfirmarCommand.cs` | Nuevo | Valida solicitud → estado `PendientePagoGarantia` → no-duplicate → inserta evento |
 | `Dtos/Responses/SolicitudPagoConfirmarResponseDto.cs` | Nuevo | Respuesta con `IdSolicitudPagoConfirmado`, `FechaPagoConfirmado`, `Mensaje` |
-| `Dtos/Validators/SolicitudPagoConfirmarRequestDtoValidator.cs` | Nuevo | Valida `IdSolicitud > 0` |
 | `Core.Domain/Core/Contracts/ISolicitudesPagoConfirmadoRepository.cs` | Nuevo | `InsertAsync` + `ExistsBySolicitudAsync` |
-| `Core.Domain/Core/Entities/SolicitudPagoConfirmado.cs` | Nuevo | Entidad de dominio con `FechaPagoConfirmado`, `IdUsuarioPagoConfirmado` |
-| `Core.Infraestructure/Repositories/Core/SolicitudesPagoConfirmadoRepository.cs` | Nuevo | SPs: `Core.SolicitudesPagoConfirmado_Insert`, `Core.SolicitudesPagoConfirmado_BySolicitud_Exists` |
-| `SolicitudesGarantiaController.cs` | Modificado | `POST {idSolicitud}/confirmar-pago` |
+| `Core.Domain/Core/Entities/SolicitudPagoConfirmado.cs` | Nuevo | Entidad con `FechaPagoConfirmado`, `IdUsuarioPagoConfirmado`, hereda de `EntityBase` |
+| `Core.Infraestructure/Repositories/Core/SolicitudesPagoConfirmadoRepository.cs` | Nuevo | SPs: `Core.SolicitudesPagoConfirmado_Insert`, `Core.SolicitudesPagoConfirmado_BySolicitud_Select` |
+| `SolicitudesGarantiaController.cs` | Modificado | `POST {idSolicitud}/confirmar-pago` — `[FromRoute]` |
 | `EstadoConfiguracionTransicionCommand.cs` | Modificado | Reemplaza mock `factura_pagada` por `SolicitudesPagoConfirmado.ExistsBySolicitudAsync` real |
-| `UnitTesting/SolicitudPagoConfirmarCommandHandlerTests.cs` | Nuevo | 9 tests (exitoso, duplicado, estado incorrecto, `[Theory]` con 3 estados, NotFound, IdCero, orden de llamadas) |
-| `IntegrationTesting/SolicitudesPagoConfirmadoTests.cs` | Nuevo | 3 tests (SinPago→False, IdCero→False, IdNegativo→False) |
+| `UnitTesting/SolicitudPagoConfirmarCommandHandlerTests.cs` | Nuevo | 8 tests (exitoso, duplicado, estado incorrecto, `[Theory]` con 3 estados, NotFound, IdCero, orden de llamadas) |
+| `IntegrationTesting/SolicitudesPagoConfirmadoTests.cs` | Nuevo | 3 tests de integración |
 
 ### US 34158 — Emitir aval
 
 | Archivo | Tipo | Descripción |
 |---|---|---|
-| `Commands/EmitirAvalCommand.cs` | Nuevo | Valida pago confirmado → obtiene FlujoEntidad → verifica idempotencia via tracking → registra `"Aval emitido"` |
-| `Dtos/Requests/EmitirAvalRequestDto.cs` | Nuevo | DTO de request (no utilizado por el endpoint, ver Obs. 5.1) |
+| `Commands/EmitirAvalCommand.cs` | Nuevo | Valida pago confirmado → obtiene FlujoEntidad → verifica idempotencia → registra tracking |
 | `Dtos/Responses/EmitirAvalResponseDto.cs` | Nuevo | Respuesta con `IdSolicitud`, `IdTracking`, `FechaEmision`, `Mensaje` |
-| `Dtos/Validators/EmitirAvalRequestDtoValidator.cs` | Nuevo | Valida `IdSolicitud > 0` (no invocado, ver Obs. 5.1) |
-| `Core.Domain/GestionFlujos/Contracts/IFlujoEntidadTrackingRepository.cs` | Modificado | Agrega `ExistsByFlujoEntidadAndOrigenEventoAsync` para control de idempotencia |
+| `Core.Domain/GestionFlujos/Contracts/IFlujoEntidadTrackingRepository.cs` | Modificado | Agrega `ExistsByFlujoEntidadAndOrigenEventoAsync` |
 | `Core.Infraestructure/Repositories/GestionFlujos/FlujoEntidadTrackingRepository.cs` | Modificado | Implementa el método con SP `GestionFlujos.FlujosEntidadesTracking_ByFlujoEntidadAndOrigenEvento_Select` |
-| `SolicitudesGarantiaController.cs` | Modificado | `POST {idSolicitud}/emitir-aval` |
-| `UnitTesting/EmitirAvalCommandHandlerTests.cs` | Nuevo | 8 tests (exitoso, tracking correcto, BadRequest pago, Conflict aval duplicado, NotFound, orden de llamadas, lista vacía, `[Theory]` con 3 ids) |
-| `IntegrationTesting/EmitirAvalIntegrationTests.cs` | Nuevo | 6 tests (ExistsPago negativos × 3, ExistsTracking negativo × 2, GetFlujoEntidad vacío) |
+| `SolicitudesGarantiaController.cs` | Modificado | `POST {idSolicitud}/emitir-aval` — `[FromRoute]` |
+| `UnitTesting/EmitirAvalCommandHandlerTests.cs` | Nuevo | 8 tests (exitoso, tracking correcto, BadRequest sin pago, Conflict duplicado, NotFound, orden de llamadas, lista vacía, `[Theory]` con 3 IDs) |
+| `IntegrationTesting/EmitirAvalIntegrationTests.cs` | Nuevo | 6 tests de integración |
 
-### Archivos transversales modificados
+### US 34022 — Comparación carta banco (incluida por integración)
+
+| Archivo | Tipo | Descripción |
+|---|---|---|
+| `Commands/ComparacionCartaBancoResolucionCommand.cs` | Nuevo | Ver review `MP/001-34022-COR-OTG-CBC` |
+| `Commands/GuardarComparacionCartaBancoCommand.cs` | Nuevo | Ver review `MP/001-34022-COR-OTG-CBC` |
+| `Controller/ComparacionCartaBancoController.cs` | Nuevo | `POST /` y `PATCH /comentario` |
+| (+ demás archivos de la feature) | Nuevo | Ver review MP para detalle completo |
+
+### Archivos transversales
 
 | Archivo | Cambio |
 |---|---|
-| `ICoreSchemaContext.cs` | Agrega `ISolicitudesFacturacionRepository` e `ISolicitudesPagoConfirmadoRepository` |
-| `CoreSchemaContext.cs` | Lazy-init de los 2 nuevos repositorios |
-| `IOCCoreSchema.cs` | Registra 3 validators, 3 command handlers, 2 repositorios nuevos |
-| `IntegrationTesting/FirmasDocumentosSolicitudTests.cs` | Nuevo — 3 tests de integración para el repositorio de firmas |
-| `EstadoConfiguracionTransicionCommandHandlerTests.cs` | Agrega mocks para los 3 nuevos repositorios de Core |
+| `ICoreSchemaContext.cs` | Agrega 3 nuevos repositorios |
+| `CoreSchemaContext.cs` | Lazy-init para los 3 nuevos repositorios |
+| `IParametrizacionesSchemaContext.cs` | Agrega `IParametrosSistemaRepository` |
+| `ParametrizacionesSchemaContext.cs` | Lazy-init `ParametrosSistema` |
+| `IOCCoreSchema.cs` | Registra handlers, validator carta banco, service carta banco, opciones, repositorios |
+| `FirmasDocumentosSolicitudRepository.cs` | Refactoriza `GetEstadoConjuntoAsync` con manejo explícito de lista vacía |
+| `EstadoConfiguracionTransicionCommandHandlerTests.cs` | Agrega mocks para los 3 repos nuevos |
+| `FirmasDocumentosSolicitudTests.cs` | Nuevo — 3 tests de integración de repo firmas |
+| `appsettings.Development.json` | Agrega `"ComparacionCartaBanco": { "UseMockData": true }`, reformateo completo |
 
-**Archivos nuevos/modificados en este PR:** ~35
+**Archivos nuevos/modificados:** ~38
 
 ---
 
@@ -82,25 +93,23 @@ El PR implementa el tramo final del flujo de instrumentación: solicitud de fact
 
 | Criterio | Estado | Observación |
 |---|---|---|
-| **CA1** – Bloquear si documentación incompleta | ✅ | `Exitoso=false` + `EstadoConjuntoContractual` con detalle de pendientes |
-| **CA2** – Facturación exitosa → registrar evento | ✅ | `InsertAsync` + retorna `IdSolicitudFacturacion` |
-| **CA3** – Trazabilidad: fecha y usuario | ✅ | `SolicitudFacturacion` hereda de `EntityBase`, el SP recibe `IdUsuarioSolicitud` |
-| **RN01** – Acción manual | ✅ | Solo se ejecuta cuando el usuario llama al endpoint |
+| **CA1** – Bloquear si documentación incompleta | ✅ | `CustomException(422)` con lista de documentos pendientes |
+| **CA2** – Registrar evento de facturación | ✅ | `InsertAsync` → retorna `IdSolicitudFacturacion` |
+| **CA3** – Trazabilidad: fecha y usuario | ✅ | `SolicitudFacturacion` hereda de `EntityBase`; SP recibe `IdUsuarioSolicitud` |
+| **RN01** – Acción manual | ✅ | Solo se ejecuta por llamada explícita al endpoint |
 | **RN02** – No permite con docs incompletos | ✅ | `GetEstadoConjuntoAsync` + `!estadoConjunto.EsCompleto` |
-| **RN03** – Pasa a estado "Pendiente de pago" | ⚠️ | El comando **no actualiza el estado de la solicitud** explícitamente. La transición de estado queda en manos del SP de `EstadoConfiguracionTransicion`. Verificar si el SP de Insert también actualiza el estado o si el flujo depende de un trigger externo. |
-| **RN04** – No permite duplicar | ✅ | `ExistsBySolicitudAsync` + `409 Conflict` |
+| **RN03** – No permite duplicar | ✅ | `ExistsBySolicitudAsync` + `409 Conflict` |
 
-### US 34157 — Pendiente de Pago / Pago OK
+### US 34157 — Pago confirmado
 
 | Criterio | Estado | Observación |
 |---|---|---|
-| **CA1** – Bloquear emisión de aval sin pago | ✅ | `EmitirAvalCommand` verifica `ExistsBySolicitudAsync` |
-| **CA2** – Registrar pago confirmado → fecha y usuario | ✅ | `SolicitudPagoConfirmado` + `InsertAsync` con `idUsuario` |
-| **CA3** – Habilitar emisión de aval | ✅ | El `EmitirAvalCommand` consulta el mismo repositorio como precondición |
+| **CA1** – Habilitar emisión de aval tras pago | ✅ | `EmitirAvalCommand` consulta `ExistsBySolicitudAsync` como precondición |
+| **CA2** – Registrar pago con fecha y usuario | ✅ | `SolicitudPagoConfirmado` + `InsertAsync` con `idUsuario` |
+| **CA3** – Validar estado `PendientePagoGarantia` | ✅ | Compara `estadoConfig.Estado.Nombre` con `EstadoEnum.PendientePagoGarantia.GetNombre()` |
 | **RN01** – Pago manual | ✅ | Endpoint explícito |
-| **RN02** – No emitir aval sin pago | ✅ | `400 BadRequest` en `EmitirAvalCommand` |
-| **RN03** – Evento único por solicitud | ✅ | `ExistsBySolicitudAsync` + `409 Conflict` |
-| **RN04** – Auditoría | ✅ | Entidad hereda de `EntityBase` |
+| **RN02** – Evento único por solicitud | ✅ | `ExistsBySolicitudAsync` + `409 Conflict` |
+| **RN03** – Auditoría | ✅ | Entidad hereda de `EntityBase` |
 
 ### US 34158 — Emitir aval
 
@@ -111,174 +120,143 @@ El PR implementa el tramo final del flujo de instrumentación: solicitud de fact
 | **CA3** – Trazabilidad: fecha y usuario | ✅ | `FechaInicioPaso = DateTime.UtcNow` + `idUsuario` en `CreateAsync` |
 | **RN01** – Requiere pago confirmado | ✅ | Primera validación del handler |
 | **RN02** – Acción manual | ✅ | Endpoint explícito |
-| **RN03** – Auditoría | ✅ | `FlujoEntidadTracking` |
-| **RN04** – Habilita paso de certificado | ⚠️ | El tracking queda registrado, pero no hay lógica explícita que "habilite" el siguiente paso. Depende de cómo el frontend interprete la presencia del tracking con `OrigenEvento = "Aval emitido"`. |
+| **RN03** – Idempotencia (no emitir dos veces) | ✅ | `ExistsByFlujoEntidadAndOrigenEventoAsync` + `409 Conflict` |
 
 ---
 
 ## 4. Puntos positivos
 
-- **Pipeline de tres pasos cohesivo.** Las tres US forman exactamente la cadena: `SolicitarFacturacion → ConfirmarPago → EmitirAval`, donde cada paso valida que el anterior se completó.
+- **Pipeline de tres pasos cohesivo.** Cada step valida que el anterior se completó: `SolicitarFacturacion → ConfirmarPago → EmitirAval`.
 - **Eliminación de mocks TODO en `EstadoConfiguracionTransicionCommand`.** Los campos `contrato_firmado`, `orden_emision_factura_existe` y `factura_pagada` ahora se calculan desde la DB real. Mejora crítica de consistencia.
-- **Idempotencia en los tres commands.** Cada uno verifica existencia previa antes de insertar, retornando `409 Conflict` ante duplicados.
-- **Tests de orden de llamadas (call sequence).** Los tests de `EmitirAvalCommand` y `SolicitarFacturacionCommand` verifican el orden exacto de las validaciones usando callbacks. Técnica de alta calidad.
-- **`[Theory]` en `SolicitudPagoConfirmarCommandHandlerTests`.** Verifica que múltiples estados incorrectos sean rechazados sin duplicar código de test.
-- **Integration tests de solo lectura.** Todos los tests de integración usan IDs altos/negativos o inexistentes, sin efectos secundarios sobre la DB.
-- **`ExistsByFlujoEntidadAndOrigenEventoAsync` en `IFlujoEntidadTrackingRepository`.** Extiende correctamente la interfaz existente en lugar de crear una nueva entidad para el tracking del aval.
+- **`Convert.ToInt32` consistente.** Los tres nuevos command handlers usan `Convert.ToInt32(_userService.CurrentUserId)`, alineado con el patrón del proyecto.
+- **`DateTime.UtcNow` consistente.** Todos los timestamps usan UTC.
+- **Tests de orden de llamadas.** Los tests de `EmitirAvalCommand` y `SolicitarFacturacionCommand` verifican el orden exacto de validaciones con callbacks.
+- **`[Theory]` en `SolicitudPagoConfirmarCommandHandlerTests`.** Verifica que múltiples estados incorrectos sean rechazados sin duplicar código.
+- **Integration tests de solo lectura.** Todos usan IDs altos/negativos/inexistentes, sin efectos secundarios sobre la DB.
+- **`GetEstadoConjuntoAsync` refactorizado.** Maneja explícitamente el caso de lista vacía con early return, y preserva el fallback `TituloDocumentoTipo ?? NombreDocumentoTipo`.
+- **Fallback en `Pendientes` preservado.** `.Select(f => f.TituloDocumentoTipo ?? f.NombreDocumentoTipo)` sigue presente; no hay riesgo de nulls en la lista.
 
 ---
 
 ## 5. Observaciones / Issues
 
-### 5.1 🔴 Validators con campos de ruta — mismo patrón ya corregido en COR-OTG-SFI
+### 5.1 ⚠️ `SolicitarFacturacionResponseDto.EstadoConjuntoContractual` nunca se popula
 
-**Severidad: Alta — puede provocar comportamientos inesperados en producción**
-
-Los tres nuevos validators están registrados en DI pero **ninguno de los endpoints tiene `[FromBody]`**, por lo que nunca son invocados:
+El campo está declarado con el comentario _"Se incluye cuando la validación falla para informar al usuario qué documentos están pendientes"_, pero el handler **lanza `CustomException(HttpStatusCode.UnprocessableEntity, ...)` en lugar de retornar el DTO** con ese campo populado:
 
 ```csharp
-// Ninguno de estos DTOs es un [FromBody], vienen de la ruta
-builder.Services.AddTransient<IValidator<SolicitarFacturacionRequestDto>, SolicitarFacturacionRequestDtoValidator>();
-builder.Services.AddTransient<IValidator<SolicitudPagoConfirmarRequestDto>, SolicitudPagoConfirmarRequestDtoValidator>();
-builder.Services.AddTransient<IValidator<EmitirAvalRequestDto>, EmitirAvalRequestDtoValidator>();
-```
-
-Adicionalmente, `EmitirAvalRequestDto` **no está instanciado en ningún lugar del controller o command**:
-
-```csharp
-// EmitirAval endpoint — no hay new EmitirAvalRequestDto en ningún lado
-public async Task<ApiResult<EmitirAvalResponseDto>> EmitirAval([FromRoute] int idSolicitud)
+// Handler — falla tirando excepción, nunca con Exitoso=false
+if (!estadoConjunto.EsCompleto)
 {
-    return await _dispatcher.Send(new EmitirAvalCommand { IdSolicitud = idSolicitud }, ...);
+    var pendientes = string.Join(", ", estadoConjunto.Pendientes);
+    throw new CustomException(
+        HttpStatusCode.UnprocessableEntity,
+        $"...Faltan firmar {estadoConjunto.Pendientes.Count} documento(s): {pendientes}");
 }
 ```
 
-**Recomendación:**
-- Eliminar los tres registros de DI (validators inutilizados).
-- Eliminar `EmitirAvalRequestDto`, `EmitirAvalRequestDtoValidator`, `SolicitarFacturacionRequestDto`, `SolicitarFacturacionRequestDtoValidator`, `SolicitudPagoConfirmarRequestDto`, `SolicitudPagoConfirmarRequestDtoValidator` — los tres DTOs de request son innecesarios ya que los commands reciben los valores directamente desde la ruta.
+Resultado: el campo `EstadoConjuntoContractual` del DTO **siempre es `null`** en todo response exitoso, y en el caso de falla no llega al frontend porque es una excepción HTTP.
+
+**Opciones:**
+1. Eliminar `EstadoConjuntoContractual` del DTO response (si el mensaje de error en la excepción es suficiente).
+2. Cambiar el handler para que retorne el DTO con `Exitoso = false` + `EstadoConjuntoContractual` poblado (requiere que el controller no mapee 200→OK automáticamente para fallos).
 
 ---
 
-### 5.2 🔴 Regresión en `RegistrarFirmaDocumentoSolicitudRequestDtoValidator` y reintroducción de `SolicitarFirmaDocumentoSolicitudRequestDtoValidator`
+### 5.2 ⚠️ SP de existencia nombrado como `_Select` en lugar de `_Exists`
 
-**Severidad: Alta — regresión de un fix aplicado al branch anterior**
-
-El diff contra `release/3.0` muestra que esta rama **agrega de nuevo** las reglas de ruta en el validator:
-
-```diff
-+ RuleFor(x => x.IdSolicitud).GreaterThan(0)...
-+ RuleFor(x => x.IdDocumentoSolicitud).GreaterThan(0)...
-  RuleFor(x => x.IdArchivoFirmado).GreaterThan(0)...
-```
-
-Y en `IOCCoreSchema.cs` vuelve a aparecer:
+`SolicitudesFacturacionRepository` y `SolicitudesPagoConfirmadoRepository` usan `ExecuteScalarAsync<bool>` sobre SPs llamados `_BySolicitud_Select`:
 
 ```csharp
-builder.Services.AddTransient<IValidator<SolicitarFirmaDocumentoSolicitudRequestDto>, SolicitarFirmaDocumentoSolicitudRequestDtoValidator>();
+// Devuelve bool desde un SP llamado _Select
+return await _executor.ExecuteScalarAsync<bool>(
+    "Core.SolicitudesFacturacion_BySolicitud_Select", parameters);
+
+return await _executor.ExecuteScalarAsync<bool>(
+    "Core.SolicitudesPagoConfirmado_BySolicitud_Select", parameters);
 ```
 
-Ambas correcciones fueron aplicadas al branch `COR-OTG-SFI-firma-conjunto-contractual` pero **no fueron incorporadas** a esta rama de integración.
+El sufijo `_Select` en la convención del proyecto implica un resultado de filas (ej: `FirmasDocumentosSolicitud_BySolicitud_Select` retorna `IEnumerable<T>`). Los SPs de existencia deberían usar `_Exists` o `_BySolicitud_Exists` para indicar que retornan un escalar booleano. Si los SPs realmente retornan una fila y se castea el primer valor como bool, la nomenclatura es confusa.
 
-**Recomendación:** Verificar que el merge de `COR-OTG-SFI` en esta rama incluya los fixes. Corregir antes del merge a `release/3.0`.
+**Recomendación:** Renombrar los SPs a `Core.SolicitudesFacturacion_BySolicitud_Exists` y `Core.SolicitudesPagoConfirmado_BySolicitud_Exists`, o documentar explícitamente que retornan `bit`.
 
 ---
 
-### 5.3 ⚠️ `SolicitarFacturacionCommand` retorna 200 OK con `Exitoso=false` en lugar de 400
+### 5.3 🔴 División por cero en `CompararMonto` (heredado de feature/34525)
 
-El handler retorna un DTO con `Exitoso = false` cuando el conjunto contractual está incompleto, en vez de lanzar `CustomException(HttpStatusCode.BadRequest, ...)`. Esto es inconsistente con el resto de la aplicación donde las violaciones de reglas de negocio se expresan con HTTP 4xx.
+`ComparacionCartaBancoService.CompararMonto` divide sin verificar que `montoResolucion != 0`:
 
 ```csharp
-// Comportamiento actual — HTTP 200 con cuerpo de error
-return new SolicitarFacturacionResponseDto { Exitoso = false, Mensaje = "..." };
-
-// Patrón consistente del proyecto
-throw new CustomException(HttpStatusCode.BadRequest, "...");
+var diferenciaPorcentaje = Math.Abs((montoCartaBanco - montoResolucion) / montoResolucion * 100);
 ```
 
-El frontend debe chequear `Exitoso` en vez de confiar en el status code. Sin embargo, la ventaja del enfoque actual es que devuelve `EstadoConjuntoContractual` con el detalle de los documentos pendientes, lo cual es valioso para el UX.
-
-**Recomendación:** Mantener el detalle de `EstadoConjuntoContractual` pero cambiar a `throw new CustomException(HttpStatusCode.UnprocessableEntity, ...)` y pasar el estado del conjunto en el mensaje o como objeto adjunto. Alternativamente, documentar la decisión de diseño explícitamente en el handler.
+Si `montoResolucion == 0`, lanza `DivideByZeroException`. Ver Obs. 5.2 de `MP/001-34022-COR-OTG-CBC` para el fix propuesto.
 
 ---
 
-### 5.4 ⚠️ `DateTime.Now` vs `DateTime.UtcNow` — inconsistencia
+### 5.4 🔴 Validator faltante para `ComparacionCartaBancoResolucionRequestDto` (heredado de feature/34525)
 
-`SolicitudPagoConfirmarCommandHandler` usa `DateTime.Now` (hora local del servidor):
-
-```csharp
-FechaPagoConfirmado = DateTime.Now,
-```
-
-`EmitirAvalCommandHandler` usa `DateTime.UtcNow`:
-
-```csharp
-var fechaEmision = DateTime.UtcNow;
-```
-
-El resto del proyecto (por ejemplo `FirmasDocumentosSolicitudRepository`) no fija la fecha en la capa de aplicación sino en el SP. Estandarizar con `DateTime.UtcNow` o delegar la fecha al SP.
+El endpoint `POST /comparacion-carta-banco` acepta `[FromBody] ComparacionCartaBancoResolucionRequestDto` pero no hay validator registrado. `IdSolicitud = 0` llega al handler sin error de validación. Ver Obs. 5.3 de `MP/001-34022-COR-OTG-CBC`.
 
 ---
 
-### 5.5 ⚠️ `Pendientes` puede contener nulls tras refactor en `GetEstadoConjuntoAsync`
+### 5.5 🔴 `FechaComparacion` nunca asignada en `GuardarComparacionCartaBancoResponseDto` (heredado de feature/34525)
 
-El refactor en `FirmasDocumentosSolicitudRepository` cambió de:
-
-```csharp
-.Select(f => f.TituloDocumentoTipo ?? f.NombreDocumentoTipo)
-```
-
-a:
+El handler `GuardarComparacionCartaBancoCommandHandler` nunca asigna `FechaComparacion` en el response:
 
 ```csharp
-.Select(f => f.TituloDocumentoTipo)
+return new GuardarComparacionCartaBancoResponseDto
+{
+    IdComparacionCartaBancoResolucion = dto.IdComparacion,
+    IdSolicitud = dto.IdSolicitud,
+    ResultadoOk = comparacionExistente.ResultadoOk,
+    Comentario = dto.Comentario
+    // FechaComparacion siempre 0001-01-01T00:00:00
+};
 ```
 
-Si `TituloDocumentoTipo` es null para algún documento, la lista `Pendientes` contendrá nulls. Esto puede causar `NullReferenceException` en el frontend al iterar la lista.
-
-**Recomendación:** Restaurar el fallback `?? f.NombreDocumentoTipo` o usar `.Where(v => v != null)` tras el select.
+Ver Obs. 5.10 de `MP/001-34022-COR-OTG-CBC`.
 
 ---
 
-### 5.6 ℹ️ Visibilidad de repositorios: `internal` → `public`
+### 5.6 ⚠️ `int.Parse` en handlers de carta banco (heredado de feature/34525)
 
-`FirmasDocumentosSolicitudRepository` cambió de `internal sealed` a `public sealed`. Los dos nuevos repositorios son `public sealed` / `public class`. La convención del proyecto (ver otros repositorios) es `internal sealed` para mantener el encapsulamiento dentro del proyecto de infraestructura.
+`ComparacionCartaBancoResolucionCommandHandler` y `GuardarComparacionCartaBancoCommandHandler` usan `int.Parse(_userService.CurrentUserId)`, inconsistente con los nuevos handlers de este PR que usan `Convert.ToInt32`:
+
+```csharp
+// handlers de este PR — correcto
+var idUsuario = Convert.ToInt32(_userService.CurrentUserId);
+
+// handlers de carta banco — inconsistente
+var idUsuario = int.Parse(_userService.CurrentUserId); // lanza FormatException si null
+```
 
 ---
 
-### 5.7 ℹ️ `SolicitudPagoConfirmarCommand` — navegación nullable `estadoConfig.Estado?.Nombre`
+### 5.7 ℹ️ `InicializarConjuntoContractualRequestDto` agregado pero no referenciado
 
-```csharp
-var estadoActualNombre = estadoConfig.Estado?.Nombre ?? string.Empty;
-```
+El DTO `InicializarConjuntoContractualRequestDto` fue agregado como archivo nuevo, pero no está referenciado en ningún controller, command ni validator del branch. Podría ser código preparatorio para una futura tarea o un archivo huérfano.
 
-Si `Estado` es null, `estadoActualNombre` es `""` y la comparación con el estado esperado fallará con `400 BadRequest` en vez de `500`. Debería validarse explícitamente que `Estado` no sea null.
+**Recomendación:** Eliminar si no corresponde a este PR. Si es preparatorio, moverlo a una PR específica.
 
 ---
 
-### 5.8 ℹ️ `EmitirAvalCommand` — selección de `FlujoEntidad` por `LastOrDefault`
+### 5.8 ℹ️ Reformateo completo de `appsettings.Development.json`
 
-```csharp
-var flujoEntidad = flujosEntidad?
-    .Where(f => f != null)
-    .OrderBy(f => f!.IdFlujoEntidad)
-    .LastOrDefault();
-```
-
-Toma el último `FlujoEntidad` por ID ascendente. Si la solicitud tiene múltiples entradas de flujo (ej. por reactivaciones), esto podría dar un resultado inesperado. Sería más explícito `.OrderByDescending(...).FirstOrDefault()`.
+El archivo cambió de indentación 4 espacios a 2 espacios en su totalidad. Genera ruido en el diff. Solo el bloque `"ComparacionCartaBanco": { "UseMockData": true }` es funcional.
 
 ---
 
 ## 6. SPs esperados en base de datos
 
-| SP | US | Acción |
-|---|---|---|
-| `Core.SolicitudesFacturacion_Insert` | 34156 | Inserta evento de facturación |
-| `Core.SolicitudesFacturacion_BySolicitud_Exists` | 34156 | Verifica existencia |
-| `Core.SolicitudesPagoConfirmado_Insert` | 34157 | Inserta evento de pago confirmado |
-| `Core.SolicitudesPagoConfirmado_BySolicitud_Exists` | 34157 | Verifica existencia de pago |
-| `GestionFlujos.FlujosEntidadesTracking_ByFlujoEntidadAndOrigenEvento_Select` | 34158 | Verifica idempotencia de "Aval emitido" |
-
-⚠️ **Verificar** que estos 5 SPs estén incluidos en los scripts de migración de la release.
+| SP | Acción |
+|---|---|
+| `Core.SolicitudesFacturacion_Insert` | Inserta evento de facturación |
+| `Core.SolicitudesFacturacion_BySolicitud_Select` | Verifica existencia de facturación por solicitud (scalar bool) |
+| `Core.SolicitudesPagoConfirmado_Insert` | Inserta evento de pago confirmado |
+| `Core.SolicitudesPagoConfirmado_BySolicitud_Select` | Verifica existencia de pago por solicitud (scalar bool) |
+| `GestionFlujos.FlujosEntidadesTracking_ByFlujoEntidadAndOrigenEvento_Select` | Verifica existencia de tracking por flujo y origen evento |
+| + SPs de la feature carta banco | Ver review MP/001-34022-COR-OTG-CBC |
 
 ---
 
@@ -286,31 +264,34 @@ Toma el último `FlujoEntidad` por ID ascendente. Si la solicitud tiene múltipl
 
 | Criterio | Estado |
 |---|---|
-| Sigue Clean Architecture (capas y dependencias correctas) | ✅ |
-| Sigue CQRS (Commands/Queries/Handlers separados) | ✅ |
-| Naming conventions del proyecto | ✅ |
+| Sigue Clean Architecture | ✅ |
+| Sigue CQRS | ✅ |
+| Naming conventions | ✅ |
 | Sin SQL inline (todo vía SPs) | ✅ |
-| Validators útiles registrados correctamente en DI | 🔴 (Obs. 5.1) |
-| Regresión de fix de validators de COR-OTG-SFI | 🔴 (Obs. 5.2) |
-| Handlers registrados en DI | ✅ |
-| Repositorios registrados en DI | ✅ |
-| Idempotencia protegida (no duplicados) | ✅ |
-| Manejo de errores con `CustomException` y HTTP codes correctos | ⚠️ (Obs. 5.3) |
-| Consistencia de fechas UTC | ⚠️ (Obs. 5.4) |
-| `Pendientes` sin nulls | ⚠️ (Obs. 5.5) |
-| Unit tests (happy path + error paths) | ✅ |
-| Integration tests | ✅ |
-| Mock TODOs reemplazados por datos reales | ✅ |
-| Script SQL de SPs incluido | ❓ (no visible en el diff) |
+| `Convert.ToInt32` en handlers nuevos | ✅ |
+| `DateTime.UtcNow` en handlers | ✅ |
+| Validators en DI solo para `[FromBody]` DTOs | ✅ |
+| Idempotencia en los 3 comandos | ✅ |
+| Eliminación de mocks en EstadoConfiguracionTransicionCommand | ✅ |
+| `GetEstadoConjuntoAsync` manejo de lista vacía | ✅ |
+| Fallback `TituloDocumentoTipo ?? NombreDocumentoTipo` | ✅ |
+| Unit tests (3 archivos, 23+ tests) | ✅ |
+| Integration tests (4 archivos) | ✅ |
+| `SolicitarFacturacionResponseDto.EstadoConjuntoContractual` nunca populado | ⚠️ (Obs. 5.1) |
+| Naming de SPs de existencia (`_Select` vs `_Exists`) | ⚠️ (Obs. 5.2) |
+| División por cero en `CompararMonto` (carta banco) | 🔴 (Obs. 5.3) |
+| Validator faltante para ComparacionCartaBancoResolucionRequestDto | 🔴 (Obs. 5.4) |
+| `FechaComparacion` sin asignar (carta banco) | 🔴 (Obs. 5.5) |
+| `int.Parse` en handlers carta banco | ⚠️ (Obs. 5.6) |
+| Scripts SQL de SPs | ❓ (no visible en diff) |
 
 ---
 
 ## 8. Conclusión
 
-Las tres US están implementadas correctamente y forman el pipeline de instrumentación esperado. Los issues a resolver antes del merge son:
+Las tres US principales (34156, 34157, 34158) están implementadas correctamente, con tests de calidad y sin los problemas que se mencionaron erróneamente en la v1 de esta revisión. Los issues bloqueantes son todos heredados de la feature de carta banco (US 34022) que fue integrada en este branch. Antes del merge:
 
-1. **Obs. 5.1 — Validators / DTOs de request innecesarios:** Eliminar los tres pares DTO+Validator que no son invocados por ningún endpoint. Si el command valida directamente (usando FluentValidation sobre el command), es la vía correcta.
-2. **Obs. 5.2 — Regresión de fixes de COR-OTG-SFI:** Aplicar o re-mergear los fixes del branch anterior antes de mergear a `release/3.0`.
-3. **Obs. 5.5 — Posibles nulls en lista `Pendientes`:** Restaurar el fallback `?? NombreDocumentoTipo`.
-
-Los puntos 5.3, 5.4, 5.6–5.8 son mejoras de calidad que pueden resolverse en este PR o quedar como deuda técnica documentada según criterio del equipo.
+1. **Obs. 5.3 — División por cero en `CompararMonto`:** Riesgo real en runtime.
+2. **Obs. 5.4 — Validator faltante para `ComparacionCartaBancoResolucionRequestDto`:** `IdSolicitud = 0` llega al handler sin validación.
+3. **Obs. 5.5 — `FechaComparacion` sin asignar:** El cliente siempre recibe `0001-01-01`.
+4. **Obs. 5.1 — `EstadoConjuntoContractual` dead field:** Definir si es error de diseño o campo a eliminar del DTO.
