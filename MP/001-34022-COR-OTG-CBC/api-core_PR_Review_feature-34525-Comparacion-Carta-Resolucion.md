@@ -12,6 +12,8 @@ El PR implementa la comparación de campos entre la carta banco y la resolución
 
 **Veredicto:** ⚠️ Aprueba con correcciones requeridas
 
+> **v2 — 16/03/2026:** Se agregan Obs. 5.10, 5.11 y 5.12 surgidas del análisis del código en disco (campo FechaComparacion sin asignar, sin validación de comparación activa al guardar comentario, naming bug en ValorCartaBanco para TipoProducto/LineaProducto).
+
 ---
 
 ## 2. Inventario de cambios
@@ -256,6 +258,76 @@ No bloquea, pero dificulta el logging, el rate limiting por solicitud y la naveg
 
 ---
 
+### 5.10 🔴 `GuardarComparacionCartaBancoResponseDto.FechaComparacion` nunca se asigna
+
+**Severidad: Alta — el campo del response siempre retorna `DateTime.MinValue` (0001-01-01)**
+
+El DTO declara la propiedad:
+
+```csharp
+public DateTime FechaComparacion { get; set; }
+```
+
+Pero en el handler, el `return` nunca la asigna:
+
+```csharp
+return new GuardarComparacionCartaBancoResponseDto
+{
+    IdComparacionCartaBancoResolucion = dto.IdComparacion,
+    IdSolicitud = dto.IdSolicitud,
+    ResultadoOk = comparacionExistente.ResultadoOk,
+    Comentario = dto.Comentario
+    // ← FechaComparacion queda como default: DateTime.MinValue (0001-01-01T00:00:00)
+};
+```
+
+El handler ya recupera `comparacionExistente` desde el repositorio, que hereda de `EntityBase` y tiene `FechaAlta`. La comparación sí tiene fecha, pero no se expone.
+
+**Fix:**
+```csharp
+FechaComparacion = comparacionExistente.FechaAlta // o la propiedad de timestamp que corresponda en EntityBase
+```
+
+---
+
+### 5.11 ⚠️ `GuardarComparacionCartaBancoCommand` no valida que la comparación esté activa
+
+El handler obtiene la comparación por `IdComparacion` con `GetByIdAsync` y valida que pertenezca a la solicitud, pero **no verifica que la comparación esté activa** (`FechaBaja == null`). Es posible guardar un comentario sobre una comparación ya desactivada (por ejemplo, la de una ejecución anterior):
+
+```csharp
+var comparacionExistente = await ((IUnitOfWork)_unitOfWork).Core.ComparacionesCartaBancoResolucion
+    .GetByIdAsync(dto.IdComparacion);
+
+if (comparacionExistente == null) { throw new CustomException(NotFound, ...); }
+if (comparacionExistente.IdSolicitud != dto.IdSolicitud) { throw new CustomException(BadRequest, ...); }
+// ← falta: if (comparacionExistente.FechaBaja != null) { throw new CustomException(BadRequest, "Comparación inactiva"); }
+```
+
+Si el frontend re-envía un `IdComparacion` de una ejecución anterior (por cache o bug), el comentario se guardaría en una comparación inactiva sin error visible.
+
+**Fix:** Agregar check de `FechaBaja == null` después de la validación de solicitud.
+
+---
+
+### 5.12 ⚠️ `ValorCartaBanco` en el response de TipoProducto/LineaProducto contiene datos de la solicitud, no de la carta banco
+
+En `CompararTipoProducto` y `CompararLineaProducto`, el campo `ValorCartaBanco` del DTO de detalle se asigna con el valor de la **solicitud**, no de la carta banco (porque la carta banco no tiene estos campos):
+
+```csharp
+var detalle = new DetalleCampoComparacionResultDto
+{
+    Campo = "TipoProducto",
+    ValorResolucion = nombreTipoProductoResolucion,
+    ValorCartaBanco = nombreTipoProductoSolicitud ?? "Desconocido"  // ← viene de solicitud.NombreTipoProducto
+};
+```
+
+El frontend mostrará este valor bajo la columna "Carta Banco" cuando en realidad es el valor de la solicitud. La comparación es en realidad resolución vs. solicitud.
+
+**Recomendación:** Renombrar el campo `ValorCartaBanco` a `ValorComparado` o similar en `DetalleCampoComparacionResultDto` para estos casos, o agregar un campo `FuenteValorComparado` en el detalle que indique si viene de la carta banco, la resolución o la solicitud.
+
+---
+
 ## 6. SPs esperados en base de datos
 
 | SP | Acción |
@@ -288,6 +360,9 @@ Además: el parámetro de sistema con codigo `COMPARACION_CARTA_BANCO_RESOLUCION
 | Feature flag para mock | ✅ |
 | Tolerancias configurables desde DB | ✅ |
 | Idempotencia de comparaciones | ✅ |
+| FechaComparacion en response GuardarComentario | 🔴 (Obs. 5.10 — siempre DateTime.MinValue) |
+| Validación de comparación activa al guardar comentario | ⚠️ (Obs. 5.11) |
+| ValorCartaBanco naming en TipoProducto/LineaProducto | ⚠️ (Obs. 5.12) |
 | HTTP codes correctos | ✅ |
 | Consistencia de ruta vs body | ⚠️ (Obs. 5.8) |
 | Scripts SQL de SPs y parámetro de sistema | ❓ (no visible en diff) |
@@ -303,4 +378,7 @@ Los puntos a resolver antes del merge son:
 1. **Obs. 5.2 — División por cero en `CompararMonto`:** Fix de una línea, riesgo real en runtime.
 2. **Obs. 5.3 — Falta validator para `ComparacionCartaBancoResolucionRequestDto`:** Permite `IdSolicitud = 0` al handler.
 3. **Obs. 5.4 — Sin unit tests:** La lógica de comparación con tolerancias es el corazón de la feature y el código más propenso a regresiones junto con los edge cases de tasa y fechas.
-4. **Obs. 5.1 — Señalizar explícitamente que la resolución es mock:** Agregar indicador en response para evitar malentendidos en QA y frontend.
+4. **Obs. 5.10 — `FechaComparacion` nunca asignada en `GuardarComparacionCartaBancoResponseDto`:** El cliente recibe `0001-01-01` como fecha de la comparación.
+5. **Obs. 5.1 — Señalizar explícitamente que la resolución es mock:** Agregar indicador en response para evitar malentendidos en QA y frontend.
+6. **Obs. 5.11 — Sin validación de comparación activa en `GuardarComparacionCartaBancoCommand`:** Posibilita actualizar el comentario de una comparación desactivada.
+7. **Obs. 5.12 — `ValorCartaBanco` en TipoProducto/LineaProducto contiene datos de la solicitud:** Naming confuso en el response para el frontend.
