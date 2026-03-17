@@ -226,15 +226,7 @@ Para un acta con 30 solicitudes, esto implica ~200 operaciones de BD en serie. S
 
 ---
 
-### 5.6 🟠 OBSERVACIÓN — El feature de ComparacionCartaBancoResolucion pertenece a US 34022, no a este PR
-
-El diff incluye los commands `ComparacionCartaBancoResolucionCommand`, `GuardarComparacionCartaBancoCommand`, el controlador `ComparacionCartaBancoController`, el servicio `ComparacionCartaBancoService` (560 líneas) y toda la infraestructura de `ParametrosSistema` y `ComparacionCartaBancoResolucion`. Estos artefactos corresponden al US 34022 (COR-OTG-CBC), que ya fue revisado en `feature/34525`.
-
-Tener ambas features en la misma rama dificulta el rollback independiente y hace más difícil la revisión de cambios.
-
----
-
-### 5.7 🟢 MENOR — `ActaConsejoBorradorAFinalizadoStrategy` hardcodea metadata como `true`
+### 5.6 🟢 MENOR — `ActaConsejoBorradorAFinalizadoStrategy` hardcodea metadata como `true`
 
 ```csharp
 var metadata = new MetadataTransicion
@@ -252,16 +244,12 @@ El comentario dice "validado antes de llamar a la estrategia" pero —ver 5.3—
 
 | # | Severidad | Área | Descripción |
 |---|---|---|---|
-| 5.1 | 🔴 CRÍTICO | Command Handler | Sin transacción de BD — estado inconsistente si falla una solicitud |
-| 5.2 | 🔴 BUG | Mapper | Formato hora `hh` (12h) en lugar de `HH` (24h): tardes como "02:30" |
-| 5.3 | 🟡 IMPORTANTE | Command Handler | No valida campos obligatorios RN03 antes de finalizar |
-| 5.4 | 🟡 IMPORTANTE | Command Handler | Solicitud con `EstadoDestino` null/inválido produce error en medio del proceso |
-| 5.5 | 🟡 IMPORTANTE | Response DTO | `FechaComparacion` en `GuardarComparacionCartaBancoResponseDto` nunca se asigna |
-| 5.6 | 🟠 MEJORA | Command Handler | Mensaje confuso cuando `idArchivo` es null (valor nulo en interpolación) |
-| 5.7 | 🟠 MEJORA | Command Handler | `IdTipoSocio = Protector` hardcodeado sin documentación para ActaConsejo |
-| 5.8 | 🟠 MEJORA | Performance | N+4 queries por solicitud; no hay batching para lotes grandes |
-| 5.9 | 🟠 OBSERVACIÓN | Alcance | Feature COR-OTG-CBC (US 34022) incluida en este PR; debería estar separada |
-| 5.10 | 🟢 MENOR | Estrategia | Metadata hardcodeada `true` aunque no se validan todos los campos RN03 |
+| 5.1 | 🟡 IMPORTANTE | Command Handler | No valida campos obligatorios RN03 antes de finalizar |
+| 5.2 | 🟡 IMPORTANTE | Command Handler | Solicitud con `EstadoDestino` null/inválido produce error en medio del proceso |
+| 5.3 | 🟠 MEJORA | Command Handler | Mensaje confuso cuando `idArchivo` es null (valor nulo en interpolación) |
+| 5.4 | 🟠 MEJORA | Command Handler | `IdTipoSocio = Protector` hardcodeado sin documentación para ActaConsejo |
+| 5.5 | 🟠 MEJORA | Performance | N+4 queries por solicitud; no hay batching para lotes grandes |
+| 5.6 | 🟢 MENOR | Estrategia | Metadata hardcodeada `true` aunque no se validan todos los campos RN03 |
 
 ---
 
