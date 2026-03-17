@@ -108,53 +108,7 @@ POST /actas-consejo/{id}/final
 
 ## 5. Observaciones
 
-### 5.1 🔴 CRÍTICO — Sin transacción de base de datos
-
-El handler actualiza el estado del acta (paso 7) y luego, en un loop, actualiza N solicitudes (paso 8) sin envolver el conjunto en una transacción. Si falla la transición de la solicitud Nº K, el acta ya tiene estado "Finalizado" en la BD pero las solicitudes 0…K-1 ya procesadas no se revierten.
-
-**Archivo:** `Core.Application/Modules/Core/Commands/ActaConsejoFinalizarCommand.cs`
-
-```csharp
-// Paso 6-7: transiciona el acta y la actualiza
-var resultTransicion = await _orchestrator.EjecutarTransicionAsync(context, cancellationToken);
-// ...
-await uow.Core.ActasConsejo.UpdateAsync(actaExistente, idUsuarioActual);
-
-// Paso 8: transiciona cada solicitud — SIN transacción
-await ProcesarTransicionSolicitudes(uow, idUsuarioActual, actaExistente, cancellationToken);
-```
-
-**Corrección sugerida:** Envolver los pasos 6-8 en una transacción de BD, o realizar todas las escrituras dentro del mismo `UnitOfWork` que soporte `BeginTransactionAsync` / `CommitAsync` / `RollbackAsync`.
-
----
-
-### 5.2 🔴 BUG — Formato de hora 12h en lugar de 24h en el mapper
-
-En `CoreMappingProfile.cs`, el formato `"hh\\:mm"` usa el especificador de 12 horas. Para un acta con hora `14:30`, el mapper produciría `"02:30"` en vez de `"14:30"`.
-
-**Archivo:** `Core.Application/Modules/Core/Dtos/Mappers/CoreMappingProfile.cs`
-
-```csharp
-// INCORRECTO — hh es 12h
-.ForMember(dest => dest.HoraInicioSesion, opt => opt.MapFrom(src =>
-    src.HoraInicioSesion != null ? src.HoraInicioSesion.Value.ToString(@"hh\:mm") : null))
-.ForMember(dest => dest.HoraFinalizacion, opt => opt.MapFrom(src =>
-    src.HoraFinalizacion != null ? src.HoraFinalizacion.Value.ToString(@"hh\:mm") : null))
-```
-
-**Corrección:**
-
-```csharp
-// CORRECTO — HH es 24h (00-23)
-.ForMember(dest => dest.HoraInicioSesion, opt => opt.MapFrom(src =>
-    src.HoraInicioSesion != null ? src.HoraInicioSesion.Value.ToString(@"HH\:mm") : null))
-.ForMember(dest => dest.HoraFinalizacion, opt => opt.MapFrom(src =>
-    src.HoraFinalizacion != null ? src.HoraFinalizacion.Value.ToString(@"HH\:mm") : null))
-```
-
----
-
-### 5.3 🟡 IMPORTANTE — `ValidarActaParaFinalizar` no verifica campos obligatorios (RN03)
+### 5.1 🟡 IMPORTANTE — `ValidarActaParaFinalizar` no verifica campos obligatorios (RN03) Nota: ya se realiza la validación previamente
 
 Según la US, los campos obligatorios para poder finalizar un acta son: N° Acta, Fecha de Sesión, Hora de Inicio, al menos un integrante del consejo y el redactor (Confeccionó). El método actual solo verifica que el estado sea Borrador y que exista un PDF.
 
@@ -182,7 +136,7 @@ Sin estas validaciones, un acta en Borrador sin Número puede ser finalizada y r
 
 ---
 
-### 5.4 🟡 IMPORTANTE — Solicitudes con `EstadoDestino` nulo o código desconocido
+### 5.2 🟡 IMPORTANTE — Solicitudes con `EstadoDestino` nulo o código desconocido
 
 Si una `ActaConsejoSolicitud` tiene `EstadoDestino = null` (o un código que `FromCodigo` no reconoce), el flujo produce:
 
@@ -216,36 +170,7 @@ if (estadoDestinoEnum == null)
 
 ---
 
-### 5.5 🟡 IMPORTANTE — `GuardarComparacionCartaBancoResponseDto.FechaComparacion` nunca se asigna
-
-El DTO de respuesta de `GuardarComparacionCartaBancoCommand` incluye:
-
-```csharp
-public class GuardarComparacionCartaBancoResponseDto
-{
-    // ...
-    public DateTime FechaComparacion { get; set; }  // ← valor por defecto: DateTime.MinValue
-}
-```
-
-El handler construye el response sin asignar `FechaComparacion`, por lo que el cliente recibe `0001-01-01T00:00:00`.
-
-**Corrección:** Leer `FechaAlta` de `comparacionExistente` (viene de `EntityBase`), o asignarlo al momento de update, o eliminarlo del DTO si no es necesario.
-
-```csharp
-return new GuardarComparacionCartaBancoResponseDto
-{
-    IdComparacionCartaBancoResolucion = dto.IdComparacion,
-    IdSolicitud = dto.IdSolicitud,
-    ResultadoOk = comparacionExistente.ResultadoOk,
-    Comentario = dto.Comentario,
-    FechaComparacion = comparacionExistente.FechaAlta  // ← agregar
-};
-```
-
----
-
-### 5.6 🟠 MEJORA — Mensaje de error confuso cuando `idArchivo` es null en `ObtenerArchivoPdfAsync`
+### 5.3 🟠 MEJORA — Mensaje de error confuso cuando `idArchivo` es null en `ObtenerArchivoPdfAsync`
 
 ```csharp
 private async Task<ArchivoActaDto?> ObtenerArchivoPdfAsync(int? idArchivo, CancellationToken cancellationToken)
@@ -268,7 +193,7 @@ $"El acta DEBE tener un archivo PDF asociado antes de ser finalizada."
 
 ---
 
-### 5.7 🟠 MEJORA — `IdTipoSocio = TipoSocioEnum.Protector` hardcodeado en el contexto para ActaConsejo
+### 5.4 🟠 MEJORA — `IdTipoSocio = TipoSocioEnum.Protector` hardcodeado en el contexto para ActaConsejo
 
 El `TransicionContext` del Acta tiene:
 ```csharp
@@ -284,7 +209,7 @@ IdTipoSocio = TipoSocioEnum.Protector, // No aplica para Actas; valor requerido 
 
 ---
 
-### 5.8 🟠 MEJORA — N+4 queries a BD por solicitud (sin batching)
+### 5.5 🟠 MEJORA — N+4 queries a BD por solicitud (sin batching)
 
 Para cada `ActaConsejoSolicitud` en el acta el handler ejecuta secuencialmente:
 1. `Solicitudes.GetByIdAsync`
@@ -301,7 +226,7 @@ Para un acta con 30 solicitudes, esto implica ~200 operaciones de BD en serie. S
 
 ---
 
-### 5.9 🟠 OBSERVACIÓN — El feature de ComparacionCartaBancoResolucion pertenece a US 34022, no a este PR
+### 5.6 🟠 OBSERVACIÓN — El feature de ComparacionCartaBancoResolucion pertenece a US 34022, no a este PR
 
 El diff incluye los commands `ComparacionCartaBancoResolucionCommand`, `GuardarComparacionCartaBancoCommand`, el controlador `ComparacionCartaBancoController`, el servicio `ComparacionCartaBancoService` (560 líneas) y toda la infraestructura de `ParametrosSistema` y `ComparacionCartaBancoResolucion`. Estos artefactos corresponden al US 34022 (COR-OTG-CBC), que ya fue revisado en `feature/34525`.
 
@@ -309,7 +234,7 @@ Tener ambas features en la misma rama dificulta el rollback independiente y hace
 
 ---
 
-### 5.10 🟢 MENOR — `ActaConsejoBorradorAFinalizadoStrategy` hardcodea metadata como `true`
+### 5.7 🟢 MENOR — `ActaConsejoBorradorAFinalizadoStrategy` hardcodea metadata como `true`
 
 ```csharp
 var metadata = new MetadataTransicion
